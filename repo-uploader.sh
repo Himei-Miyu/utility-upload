@@ -26,13 +26,14 @@ log() { echo -e "$@"; }
 logContinue() { read -ersp "$(printf $INFO) please enter key to continue"; }
 setInput() { read -p "$(printf $INFO) $1" $2; }
 setInput::choice() { read -n $1 -p "$(printf $INFO) $2" $3;echo; }
+setInput::validateYes() { [[ "${!1}" == "y" ]] && eval "$1='yes'" || eval "$1='no'"; }
 setUsername() { setInput "Username : " GIT_USERNAME; }
 setEmail() { setInput "Email : " GIT_EMAIL; }
 setBranch() { setInput "Branch : " GIT_BRANCH; }
 setRepository() { setInput "Repository : " GIT_REPO; }
 setSignature() {
     setInput::choice 1 "Commit Signature (y/N) : " GIT_COMMIT_SIGN;
-    [[ "$GIT_COMMIT_SIGN" == "y" ]] && GIT_COMMIT_SIGN="yes" || GIT_COMMIT_SIGN="no"
+    setInput::validateYes GIT_COMMIT_SIGN
 }
 setMessage() { read -ei "$GIT_COMMIT_MSG" -p "$(printf $INFO) Commit Message : " GIT_COMMIT_MSG; }
 getInput() {
@@ -87,13 +88,38 @@ logInput() {
     log "$INFO - Commit Message     : $GREEN$GIT_COMMIT_MSG"
     log "$PINK========================"
     setInput::choice 1 "Data Correct? y/N : " IS_CORRECT
-    [[ "$IS_CORRECT" == "y" ]] && IS_CORRECT="yes" || IS_CORRECT="no"
+    setInput::validateYes IS_CORRECT
     [[ "$IS_CORRECT" == "no" ]] && {
         changeInput::loop
         logInput
     }
 }
-
+optionInput::setOverride() {
+    local INPUT_FILTERED=($(echo $@ | sed 's/\s*-[^ ]*//g'))
+    GIT_USERNAME=${INPUT_FILTERED[0]}
+    GIT_EMAIL=${INPUT_FILTERED[1]}
+    GIT_REPO=${INPUT_FILTERED[2]}
+    GIT_BRANCH=${INPUT_FILTERED[3]}
+    GIT_COMMIT_MSG=${INPUT_FILTERED[@]:4}
+}
+optionInput::setOption() {
+    local INPUT_FILTERED=($(echo $@ | grep -o '\-[^ ]*'))
+    for OPT in ${INPUT_FILTERED[@]}; do
+        case "$OPT" in
+            "-i"|"-init"|"--initial") GIT_INITIAL="yes";;
+            "-s"|"-sign"|"--signature") GIT_COMMIT_SIGN="yes";;
+            "-h"|"--help") optionInput::help; exit 0;;
+            *) log "$FAIL$ALERT Option invalid, type '--help' see help"; exit 1;;
+        esac
+    done
+}
+optionInput::help() {
+    log "Syntax: [OPTION] USERNAME EMAIL REPOSITORY BRANCH COMMIT_MESSAGE"
+    log "Options:"
+    log " -i, -init, --initial          make initial git"
+    log " -s, -sign, --signature        use signature with commit"
+    log " -h, --help                    how to use command"
+}
 ############################################
 ##
 ## REPO-UPLOADER SCRIPT
@@ -111,35 +137,8 @@ done
 [ $IS_ERROR -eq 1 ] && exit 1
 
 optionInput() {
-    [[ "$1" == -* ]] && {
-        case "$1" in
-            "-i"|"-init"|"--initial")
-                GIT_INITIAL="yes";;
-            "-s"|"-sign"|"--signature")
-                GIT_COMMIT_SIGN="yes";;
-            "-h"|"--help")
-                log "Syntax: [OPTION] USERNAME EMAIL REPOSITORY BRANCH COMMIT_MESSAGE"
-                log "Options:"
-                log " -i, -init, --initial          make initial git"
-                log " -s, -sign, --signature        use signature with commit"
-                log " -h, --help                    how to use command"
-                exit 0;;
-            *)
-                echo -e "$FAIL$ALERT Option invalid, type '--help' see help";
-                exit 1;;
-        esac
-        GIT_USERNAME=$2
-        GIT_EMAIL=$3
-        GIT_REPO=$4
-        GIT_BRANCH=$5
-        GIT_COMMIT_MSG=${@:6}
-        return 0
-    }
-    GIT_USERNAME=$1
-    GIT_EMAIL=$2
-    GIT_REPO=$3
-    GIT_BRANCH=$5
-    GIT_COMMIT_MSG=${@:5}
+    optionInput::setOverride $@
+    optionInput::setOption $@
 }
 
 optionInput $@
@@ -151,21 +150,39 @@ initialInput
 logInput
 
 # SSH Required
-
+SSH_PRIVATE_KEY="~/.ssh/github-$GIT_USERNAME"
+SSH_PUBLIC_KEY="$SSH_PRIVATE_KEY.pub"
+eval "$(ssh-agent -s)" &> /dev/null
+ssh-add $SSH_PRIVATE_KEY &> /dev/null || {
+    log "$INFO SSH Key not found"
+    log "(u)use my key   (n)new key"
+    setInput::choice 1 "Choose option : " IS_SSH_KEY
+    [[ "$IS_SSH_KEY" == "u" ]] && {
+        log "$INFO My file name SSH private key"
+        ls -A ~/.ssh | grep -vE 'known_hosts|authorized_keys|\.pub'
+        setInput "Name : " SSH_PRIVATE_KEY_FILE_NAME
+        ssh-add ~/.ssh/$SSH_PRIVATE_KEY_FILE_NAME &> /dev/null
+        log "SSH Section Finished"
+    }
+}
+ssh -T git@github.com 2>&1 | grep -E 'successfully' | sed -nE 's/.*\s(.+)!.*/\1/p'
 
 # GPG Required
+#gpg --list-secret-keys --keyid-format long --with-colons | grep -E 'sec|uid' | sed -nE 'N;s/.*:([A-Z0-9]{16}):.*<([^>]*)>.*/\1 \2/p'
 
 # Git Initial
 [ "$GIT_INITIAL" ] && {
     [ -d ".git" ] && {
         log "This folder is git repository"
         setInput::choice 1 "need force initial? (y/N) : " IS_INITIAL
-        [[ "$IS_INITIAL" == "y" ]] && {
+        setInput::validateYes IS_INITIAL
+        [[ "$IS_INITIAL" == "yes" ]] && {
             rm -rf .git
             git init
         }
+        exit 0
     }
     git init
 }
 
-#gpg --list-secret-keys --keyid-format long --with-colons | grep -E 'sec|uid' | sed -nE 'N;s/.*:([A-Z0-9]{16}):.*<([^>]*)>.*/\1 \2/p'
+log "Run script repo-uploader completed."

@@ -12,6 +12,7 @@ SUCCESS="${WHITE}[${GREEN}✓${WHITE}]"
 FAIL="${WHITE}[${RED}X${WHITE}]"
 INFO="${WHITE}[${YELLOW}i${WHITE}]"
 CMD_REQUIRED=(git ssh gpg);
+GIT_INITIAL=""
 GIT_USERNAME=""
 GIT_EMAIL=""
 GIT_REPO=""
@@ -24,12 +25,13 @@ IS_ERROR=0
 log() { echo -e "$@"; }
 logContinue() { read -ersp "$(printf $INFO) please enter key to continue"; }
 setInput() { read -p "$(printf $INFO) $1" $2; }
+setInput::choice() { read -n $1 -p "$(printf $INFO) $2" $3;echo; }
 setUsername() { setInput "Username : " GIT_USERNAME; }
 setEmail() { setInput "Email : " GIT_EMAIL; }
 setBranch() { setInput "Branch : " GIT_BRANCH; }
 setRepository() { setInput "Repository : " GIT_REPO; }
 setSignature() {
-    setInput "Commit Signature (y/N) : " GIT_COMMIT_SIGN;
+    setInput::choice 1 "Commit Signature (y/N) : " GIT_COMMIT_SIGN;
     [[ "$GIT_COMMIT_SIGN" == "y" ]] && GIT_COMMIT_SIGN="yes" || GIT_COMMIT_SIGN="no"
 }
 setMessage() { read -ei "$GIT_COMMIT_MSG" -p "$(printf $INFO) Commit Message : " GIT_COMMIT_MSG; }
@@ -46,11 +48,16 @@ getInput() {
         GIT_REPO=$(git remote get-url origin --push &> /dev/null| sed -nE 's/.*\/(.+)\..*/\1/p')
         [ -z "$GIT_REPO" ] && setRepository
     }
+    [[ "$1" == "GIT_BRANCH" ]] && {
+        GIT_BRANCH=$(git branch &> /dev/null | grep -E '^\*' | sed -nE 's/^\*\s(.*)$/\1/p')
+        [ -z "$GIT_BRANCH" ] && GIT_BRANCH="main"
+    }
 }
 initialInput() {
     [ -z "$GIT_USERNAME" ] && getInput GIT_USERNAME
     [ -z "$GIT_EMAIL" ] && getInput GIT_EMAIL
     [ -z "$GIT_REPO" ] && getInput GIT_REPO
+	[ -z "$GIT_BRANCH" ] && getInput GIT_BRANCH
     [ -z "$GIT_COMMIT_SIGN" ] && setSignature
     [ -z "$GIT_COMMIT_MSG" ] && GIT_COMMIT_MSG="✨ Refactor Code"
     setMessage
@@ -67,7 +74,7 @@ changeInput() {
 changeInput::loop() {
     log "(u)username (e)email (r)repository"
     log "(b)branch   (s)sign  (m)msg"
-    setInput "What need change : " GET_CHANGE
+    setInput::choice 1 "What need change : " GET_CHANGE
     changeInput $GET_CHANGE
 }
 logInput() {
@@ -79,7 +86,7 @@ logInput() {
     log "$INFO - Commit Signature   : $GREEN$GIT_COMMIT_SIGN"
     log "$INFO - Commit Message     : $GREEN$GIT_COMMIT_MSG"
     log "$PINK========================"
-    setInput "Data Correct? y/N : " IS_CORRECT
+    setInput::choice 1 "Data Correct? y/N : " IS_CORRECT
     [[ "$IS_CORRECT" == "y" ]] && IS_CORRECT="yes" || IS_CORRECT="no"
     [[ "$IS_CORRECT" == "no" ]] && {
         changeInput::loop
@@ -124,14 +131,14 @@ optionInput() {
         GIT_USERNAME=$2
         GIT_EMAIL=$3
         GIT_REPO=$4
-        GIT_BRANCH=${5:-"main"}
+        GIT_BRANCH=$5
         GIT_COMMIT_MSG=${@:6}
         return 0
     }
     GIT_USERNAME=$1
     GIT_EMAIL=$2
     GIT_REPO=$3
-    GIT_BRANCH=${4:-"main"}
+    GIT_BRANCH=$5
     GIT_COMMIT_MSG=${@:5}
 }
 
@@ -143,5 +150,22 @@ initialInput
 # user info
 logInput
 
-[ -d ".git" ] || git init
+# SSH Required
+
+
+# GPG Required
+
+# Git Initial
+[ "$GIT_INITIAL" ] && {
+    [ -d ".git" ] && {
+        log "This folder is git repository"
+        setInput::choice 1 "need force initial? (y/N) : " IS_INITIAL
+        [[ "$IS_INITIAL" == "y" ]] && {
+            rm -rf .git
+            git init
+        }
+    }
+    git init
+}
+
 #gpg --list-secret-keys --keyid-format long --with-colons | grep -E 'sec|uid' | sed -nE 'N;s/.*:([A-Z0-9]{16}):.*<([^>]*)>.*/\1 \2/p'
